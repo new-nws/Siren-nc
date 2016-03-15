@@ -37,17 +37,33 @@ public enum SirenAlertType {
 }
 
 /**
-    Determines the frequency in which the the version check is performed
+    Determines the frequency in which the the version check/Alert show is performed
     
-    - .Immediately: Version check performed every time the app is launched
-    - .Daily: Version check performedonce a day
-    - .Weekly: Version check performed once a week
+    - .Immediately: Version check/Alert show performed every time the app is launched
+    - .Daily: Version check/Alert show performedonce a day
+    - .Weekly: Version check/Alert show performed once a week
 
 */
-public enum SirenVersionCheckType: Int {
-    case Immediately = 0    // Version check performed every time the app is launched
-    case Daily = 1          // Version check performed once a day
-    case Weekly = 7         // Version check performed once a week
+public enum SirenFrequencyType: Int {
+    case Immediately = 0    // Version check/Alert show performed every time the app is launched
+    case Daily = 1          // Version check/Alert show performed once a day
+    case Weekly = 7         // Version check/Alert show performed once a week
+}
+
+/**
+ Determines the type of version update it is. Supporting for 4 type of semantic version update.
+ 
+ - .Major: A.b.c.d <- Major version update
+ - .Minor: a.B.c.d <- Minor version update
+ - .Patch: a.b.C.d <- Patch version update
+ - .Revision: a.b.c.D <- Revision version update
+ 
+ */
+public enum SirenSemanticVersionFragment{
+    case Major              // A.b.c.d <- Major version update
+    case Minor              // a.B.c.d <- Minor version update
+    case Patch              // a.b.C.d <- Patch version update
+    case Revision           // a.b.c.D <- Revision version update
 }
 
 /**
@@ -94,6 +110,7 @@ public enum SirenLanguageType: String {
 private enum SirenUserDefaults: String {
     case StoredVersionCheckDate     // NSUserDefault key that stores the timestamp of the last version check
     case StoredSkippedVersion       // NSUserDefault key that stores the version that a user decided to skip
+    case StoredVersionAlertShowDate     // NSUserDefault key that stores the timestamp of the last time alert was shown
 }
 
 // MARK: Siren
@@ -185,6 +202,42 @@ public class Siren: NSObject {
     */
     public var revisionUpdateAlertType = SirenAlertType.Option
     
+    /**
+     Determines the frequency of alert showing for major updates: A.b.c.d
+     
+     Defaults to SirenFrequencyType.Immediately.
+     
+     See the SirenFrequencyType enum for full details.
+     */
+    public var majorUpdateShowAlertFrequencyType = SirenFrequencyType.Immediately
+    
+    /**
+     Determines the frequency of alert showing for minor updates: a.B.c.d
+     
+     Defaults to SirenFrequencyType.Immediately.
+     
+     See the SirenFrequencyType enum for full details.
+     */
+    public var minorUpdateShowAlertFrequencyType  = SirenFrequencyType.Immediately
+    
+    /**
+     Determines the frequency of alert showing for patch updates: a.b.C.d
+     
+     Defaults to SirenFrequencyType.Immediately.
+     
+     See the SirenFrequencyType enum for full details.
+     */
+    public var patchUpdateShowAlertFrequencyType = SirenFrequencyType.Immediately
+    
+    /**
+     Determines the frequency of alert showing for revision updates: a.b.c.D
+     
+     Defaults to SirenFrequencyType.Immediately.
+     
+     See the SirenFrequencyType enum for full details.
+     */
+    public var revisionUpdateShowAlertFrequencyType = SirenFrequencyType.Immediately
+    
     // Required Vars
     /**
         The App Store / iTunes Connect ID for your app.
@@ -222,6 +275,7 @@ public class Siren: NSObject {
     
     // Private
     private var lastVersionCheckPerformedOnDate: NSDate?
+    private var lastAlertShowPerformedOnDate: NSDate?
     private var currentAppStoreVersion: String?
     private var updaterWindow: UIWindow?
     
@@ -236,6 +290,7 @@ public class Siren: NSObject {
     
     override init() {
         lastVersionCheckPerformedOnDate = NSUserDefaults.standardUserDefaults().objectForKey(SirenUserDefaults.StoredVersionCheckDate.rawValue) as? NSDate
+        lastAlertShowPerformedOnDate = NSUserDefaults.standardUserDefaults().objectForKey(SirenUserDefaults.StoredVersionAlertShowDate.rawValue) as? NSDate
     }
     
     // MARK: Check Version
@@ -244,9 +299,9 @@ public class Siren: NSObject {
         The default check is against the US App Store, but if your app is not listed in the US,
         you should set the `countryCode` property before calling this method. Please refer to the countryCode property for more information.
     
-        - parameter checkType: The frequency in days in which you want a check to be performed. Please refer to the SirenVersionCheckType enum for more details.
+        - parameter checkType: The frequency in days in which you want a check to be performed. Please refer to the SirenFrequencyType enum for more details.
     */
-    public func checkVersion(checkType: SirenVersionCheckType) {
+    public func checkVersion(checkType: SirenFrequencyType) {
         
         guard let _ = appID else {
             print("[Siren] Please make sure that you have set 'appID' before calling checkVersion.")
@@ -261,7 +316,7 @@ public class Siren: NSObject {
                 return
             }
             
-            if daysSinceLastVersionCheckDate(lastVersionCheckPerformedOnDate) >= checkType.rawValue {
+            if daysSinceLastActionDate(lastVersionCheckPerformedOnDate) >= checkType.rawValue {
                 performVersionCheck()
             }
         }
@@ -364,23 +419,67 @@ public class Siren: NSObject {
 
 // MARK: Alert
 private extension Siren {
+    
+    func showAlertIfSatisfiesFrequencyRequirments() {
+
+        guard let lastAlertShowPerformedOnDate = lastAlertShowPerformedOnDate else {
+            //In case this is the first time we want to show the alert
+            showAlert()
+            return
+        }
+
+        let versionComponent = getSemanticVersionComponent()
+        
+        switch versionComponent {
+            
+        case .Major:
+            if majorUpdateShowAlertFrequencyType == .Immediately {
+                showAlert()
+            }else if daysSinceLastActionDate(lastAlertShowPerformedOnDate) >= majorUpdateShowAlertFrequencyType.rawValue {
+                showAlert()
+            }
+        case .Minor:
+            if minorUpdateShowAlertFrequencyType == .Immediately {
+                showAlert()
+            }else if daysSinceLastActionDate(lastAlertShowPerformedOnDate) >= minorUpdateShowAlertFrequencyType.rawValue {
+                showAlert()
+            }
+        case .Patch:
+            if patchUpdateShowAlertFrequencyType == .Immediately {
+                showAlert()
+            }else if daysSinceLastActionDate(lastAlertShowPerformedOnDate) >= patchUpdateShowAlertFrequencyType.rawValue {
+                showAlert()
+            }
+        case .Revision:
+            if revisionUpdateShowAlertFrequencyType == .Immediately {
+                showAlert()
+            }else if daysSinceLastActionDate(lastAlertShowPerformedOnDate) >= revisionUpdateShowAlertFrequencyType.rawValue {
+                showAlert()
+            }
+        }
+        
+    }
+    
     func showAlertIfCurrentAppStoreVersionNotSkipped() {
         
         alertType = setAlertType()
         
         guard let previouslySkippedVersion = NSUserDefaults.standardUserDefaults().objectForKey(SirenUserDefaults.StoredSkippedVersion.rawValue) as? String else {
-            showAlert()
+            showAlertIfSatisfiesFrequencyRequirments()
             return
         }
         
         if let currentAppStoreVersion = currentAppStoreVersion {
             if currentAppStoreVersion != previouslySkippedVersion {
-                showAlert()
+                showAlertIfSatisfiesFrequencyRequirments()
             }
         }
     }
     
     func showAlert() {
+        
+        // Store alert shown date
+        storeAlertShowDate()
         
         let updateAvailableMessage = NSBundle().localizedString("Update Available", forceLanguageLocalization: forceLanguageLocalization)
         let newVersionMessage = localizedNewVersionMessage()
@@ -500,9 +599,15 @@ private extension Siren {
         return NSURL(string: storeURLString)!
     }
     
-    func daysSinceLastVersionCheckDate(lastVersionCheckPerformedOnDate: NSDate) -> Int {
+    func daysSinceLastActionDate(lastActionPerformedOnDate: NSDate) -> Int {
         let calendar = NSCalendar.currentCalendar()
-        let components = calendar.components(.Day, fromDate: lastVersionCheckPerformedOnDate, toDate: NSDate(), options: [])
+        let components = calendar.components(.Day, fromDate: lastActionPerformedOnDate, toDate: NSDate(), options: [])
+        if components.day < 0 {
+            //In case the user set the date manually in the Settings to a date in the future and then switched back to correct date
+            //we would get a negative number.
+            //this return assures that if an edge scenario like that happens we return the highest number available (.Weekly)
+            return SirenFrequencyType.Weekly.rawValue
+        }
         return components.day
     }
     
@@ -527,10 +632,37 @@ private extension Siren {
         }
     }
     
+    func storeAlertShowDate() {
+        lastAlertShowPerformedOnDate = NSDate()
+        if let lastAlertShowPerformedOnDate = lastAlertShowPerformedOnDate {
+            NSUserDefaults.standardUserDefaults().setObject(lastAlertShowPerformedOnDate, forKey: SirenUserDefaults.StoredVersionAlertShowDate.rawValue)
+            NSUserDefaults.standardUserDefaults().synchronize()
+        }
+    }
+    
     func setAlertType() -> SirenAlertType {
+        let versionComponent = getSemanticVersionComponent()
+        
+        switch versionComponent {
+            
+        case .Major:
+            alertType = majorUpdateAlertType
+        case .Minor:
+            alertType = minorUpdateAlertType
+        case .Patch:
+            alertType = patchUpdateAlertType
+        case .Revision:
+            alertType = revisionUpdateAlertType
+        }
+        
+        return alertType
+    }
+    
+    func getSemanticVersionComponent() -> SirenSemanticVersionFragment {
         
         guard let currentInstalledVersion = currentInstalledVersion, currentAppStoreVersion = currentAppStoreVersion else {
-            return .Option
+            //Erroneous scenario. Returning .Major as default.
+            return .Major
         }
         
         let oldVersion = (currentInstalledVersion).characters.split {$0 == "."}.map { String($0) }.map {Int($0) ?? 0}
@@ -538,17 +670,18 @@ private extension Siren {
         
         if 2...4 ~= oldVersion.count && oldVersion.count == newVersion.count {
             if newVersion[0] > oldVersion[0] { // A.b.c.d
-                alertType = majorUpdateAlertType
+                return .Major
             } else if newVersion[1] > oldVersion[1] { // a.B.c.d
-                alertType = minorUpdateAlertType
+                return .Minor
             } else if newVersion.count > 2 && (oldVersion.count <= 2 || newVersion[2] > oldVersion[2]) { // a.b.C.d
-                alertType = patchUpdateAlertType
+                return .Patch
             } else if newVersion.count > 3 && (oldVersion.count <= 3 || newVersion[3] > oldVersion[3]) { // a.b.c.D
-                alertType = revisionUpdateAlertType
+                return .Revision
             }
         }
         
-        return alertType
+        //Case not handled. Returning .Major as default
+        return .Major
     }
     
     func hideWindow() {

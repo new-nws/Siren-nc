@@ -338,7 +338,7 @@ public class Siren: NSObject {
         }
     }
     
-    private func performVersionCheck(forceiTunes forceiTunes:Bool = true) {
+    private func performVersionCheck(forceiTunes forceiTunes:Bool = false) {
         
         var urlFromString:NSURL? = customURLFromString()
         
@@ -771,11 +771,11 @@ private extension Siren {
                 return .Minor
             }else if newVersion[1] < oldVersion[1] { // a.B.c.d
                 return nil
-            }else if newVersion.count > 2 && (oldVersion.count <= 2 || newVersion[2] > oldVersion[2]) { // a.b.C.d
+            }else if newVersion[2] > oldVersion[2] { // a.b.C.d
                 return .Patch
             }else if newVersion[2] < oldVersion[2] { // a.b.C.d
                 return nil
-            }else if newVersion.count > 3 && (oldVersion.count <= 3 || newVersion[3] > oldVersion[3]) { // a.b.c.D
+            }else if newVersion[3] > oldVersion[3] { // a.b.c.D
                 return .Revision
             }else if newVersion[3] < oldVersion[3] { // a.b.c.D
                 return nil
@@ -814,11 +814,11 @@ private extension Siren {
                 return true
             } else if newVersion[1] < oldVersion[1] { // a.B.c.d
                 return false
-            } else if newVersion.count > 2 && (oldVersion.count <= 2 || newVersion[2] > oldVersion[2]) { // a.b.C.d
+            } else if newVersion[2] > oldVersion[2] { // a.b.C.d
                 return true
             } else if newVersion[2] < oldVersion[2] { // a.b.C.d
                 return false
-            } else if newVersion.count > 3 && (oldVersion.count <= 3 || newVersion[3] > oldVersion[3]) { // a.b.c.D
+            } else if newVersion[3] > oldVersion[3] { // a.b.c.D
                 return true
             } else if newVersion[3] < oldVersion[3] { // a.b.c.D
                 return false

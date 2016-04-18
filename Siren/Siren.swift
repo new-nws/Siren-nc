@@ -394,6 +394,11 @@ public class Siren: NSObject {
                     if self.debugEnabled {
                         print("[Siren] Error retrieving App Store data as data was nil: \(error.localizedDescription)")
                     }
+                    //in case we were trying to parse json file from the customURL and it threw an exception
+                    //let us go ahead and fetch the itunes store json
+                    if forceiTunes == false {
+                        self.performVersionCheck(forceiTunes:true)
+                    }
                 }
             }
             

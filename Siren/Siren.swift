@@ -351,7 +351,9 @@ public class Siren: NSObject {
         request.HTTPMethod = "GET"
         
         // Perform Request
-        let session = NSURLSession.sharedSession()
+        let sessionConfiguration = NSURLSessionConfiguration.ephemeralSessionConfiguration()
+        let session = NSURLSession(configuration: sessionConfiguration)
+        
         let task = session.dataTaskWithRequest(request, completionHandler: { (data, response, error) -> Void in
             
             if let error = error {

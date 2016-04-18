@@ -351,8 +351,7 @@ public class Siren: NSObject {
         request.HTTPMethod = "GET"
         
         // Perform Request
-        let sessionConfiguration = NSURLSessionConfiguration.ephemeralSessionConfiguration()
-        let session = NSURLSession(configuration: sessionConfiguration)
+        let session = NSURLSession.sharedSession()
         
         let task = session.dataTaskWithRequest(request, completionHandler: { (data, response, error) -> Void in
             
@@ -670,7 +669,7 @@ private extension Siren {
             return nil
         }
         
-        var storeURLString = "\(customURLBase)\(appID!)"
+        var storeURLString = "\(customURLBase)\(appID!)?id=\(appID!)"
         
         if let countryCode = countryCode {
             storeURLString += "&country=\(countryCode)"

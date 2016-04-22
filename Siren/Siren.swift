@@ -262,6 +262,21 @@ public class Siren: NSObject {
     public var countryCode: String?
     
     /**
+        The custom URL base to the json which contains version and mandatory_version.
+     
+     Example json:
+     {
+         "results":[{
+             "version":"4.4.7.1",
+             "mandatory_version":"4.4.7.0"
+         }]
+     }
+     
+     If customURL is provided then it will check for mandatory_version first. If that is fine it will look for version key. If that is not provided it will check version on itunes. the behaviour for "version" key is the same for itunes and custom URL.
+     */
+    public var customURLBase: String?
+    
+    /**
         Overrides the default localization of a user's device when presenting the update message and button titles in the alert.
     
         See the SirenLanguageType enum for more details.
@@ -277,6 +292,7 @@ public class Siren: NSObject {
     private var lastVersionCheckPerformedOnDate: NSDate?
     private var lastAlertShowPerformedOnDate: NSDate?
     private var currentAppStoreVersion: String?
+    private var currentForceUpdateVersion: String?
     private var updaterWindow: UIWindow?
     
     // MARK: Initialization
@@ -322,15 +338,21 @@ public class Siren: NSObject {
         }
     }
     
-    private func performVersionCheck() {
+    private func performVersionCheck(forceiTunes forceiTunes:Bool = false) {
+        
+        var urlFromString:NSURL? = customURLFromString()
+        
+        if forceiTunes == true || urlFromString == nil {
+            urlFromString = iTunesURLFromString()
+        }
         
         // Create Request
-        let itunesURL = iTunesURLFromString()
-        let request = NSMutableURLRequest(URL: itunesURL)
+        let request = NSMutableURLRequest(URL:urlFromString!)
         request.HTTPMethod = "GET"
         
         // Perform Request
         let session = NSURLSession.sharedSession()
+        
         let task = session.dataTaskWithRequest(request, completionHandler: { (data, response, error) -> Void in
             
             if let error = error {
@@ -364,13 +386,18 @@ public class Siren: NSObject {
                         }
                         
                         // Process Results (e.g., extract current version on the AppStore)
-                        self.processVersionCheckResults(appData)
+                        self.processVersionCheckResults(appData, forceiTunes:forceiTunes)
                         
                     })
                     
                 } catch let error as NSError {
                     if self.debugEnabled {
                         print("[Siren] Error retrieving App Store data as data was nil: \(error.localizedDescription)")
+                    }
+                    //in case we were trying to parse json file from the customURL and it threw an exception
+                    //let us go ahead and fetch the itunes store json
+                    if forceiTunes == false {
+                        self.performVersionCheck(forceiTunes:true)
                     }
                 }
             }
@@ -380,7 +407,7 @@ public class Siren: NSObject {
         task.resume()
     }
     
-    private func processVersionCheckResults(lookupResults: [String: AnyObject]) {
+    private func processVersionCheckResults(lookupResults: [String: AnyObject], forceiTunes:Bool) {
         
         // Store version comparison date
         storeVersionCheckDate()
@@ -394,9 +421,19 @@ public class Siren: NSObject {
         
         if results.isEmpty == false { // Conditional that avoids crash when app not in App Store or appID mistyped
             currentAppStoreVersion = results[0]["version"] as? String
+            currentForceUpdateVersion = results[0]["mandatory_version"] as? String
+            
+            // We break the flow if mandatory_version is supplied in order to first check for mandatory updates from custom URLs
+            if currentForceUpdateVersion != nil {
+                showAlertIfMandatoryUpdateAvailable(forceiTunes: forceiTunes)
+                return
+            }
             guard let _ = currentAppStoreVersion else {
                 if debugEnabled {
                     print("[Siren] Error retrieving App Store verson number as results[0] does not contain a 'version' key")
+                }
+                if forceiTunes == false {
+                    performVersionCheck(forceiTunes: true)
                 }
                 return
             }
@@ -428,7 +465,9 @@ private extension Siren {
             return
         }
 
-        let versionComponent = getSemanticVersionComponent()
+        guard let versionComponent = getSemanticVersionComponent() else {
+            return
+        }
         
         switch versionComponent {
             
@@ -460,9 +499,39 @@ private extension Siren {
         
     }
     
+    func showAlertIfMandatoryUpdateAvailable(forceiTunes forceiTunes:Bool) {
+        
+        if let shouldForceMandatoryUpdate = checkMandatoryUpdate() where shouldForceMandatoryUpdate == true {
+            alertType = .Force
+            showAlert()
+            return
+        }
+        
+        guard let _ = currentAppStoreVersion else {
+            if debugEnabled {
+                print("[Siren] Error retrieving App Store verson number as results[0] does not contain a 'version' key")
+            }
+            if forceiTunes == false {
+                performVersionCheck(forceiTunes: true)
+            }
+            return
+        }
+        
+        if isAppStoreVersionNewer() {
+            showAlertIfCurrentAppStoreVersionNotSkipped()
+        } else {
+            if debugEnabled {
+                print("[Siren] App Store version of app is not newer")
+            }
+        }
+    }
+    
     func showAlertIfCurrentAppStoreVersionNotSkipped() {
         
-        alertType = setAlertType()
+        guard let alertTypeCheck = setAlertType() else {
+            return
+        }
+        alertType = alertTypeCheck
         
         guard let previouslySkippedVersion = NSUserDefaults.standardUserDefaults().objectForKey(SirenUserDefaults.StoredSkippedVersion.rawValue) as? String else {
             showAlertIfSatisfiesFrequencyRequirments()
@@ -599,6 +668,25 @@ private extension Siren {
         return NSURL(string: storeURLString)!
     }
     
+    func customURLFromString() -> NSURL? {
+        
+        guard let customURLBase = customURLBase else {
+            return nil
+        }
+        
+        var storeURLString = "\(customURLBase)\(appID!)?id=\(appID!)"
+        
+        if let countryCode = countryCode {
+            storeURLString += "&country=\(countryCode)"
+        }
+        
+        if debugEnabled {
+            print("[Siren] iTunes Lookup URL: \(storeURLString)")
+        }
+        
+        return NSURL(string: storeURLString)!
+    }
+    
     func daysSinceLastActionDate(lastActionPerformedOnDate: NSDate) -> Int {
         let calendar = NSCalendar.currentCalendar()
         let components = calendar.components(.Day, fromDate: lastActionPerformedOnDate, toDate: NSDate(), options: [])
@@ -640,8 +728,11 @@ private extension Siren {
         }
     }
     
-    func setAlertType() -> SirenAlertType {
-        let versionComponent = getSemanticVersionComponent()
+    func setAlertType() -> SirenAlertType? {
+        
+        guard let versionComponent = getSemanticVersionComponent() else {
+            return nil
+        }
         
         switch versionComponent {
             
@@ -658,30 +749,90 @@ private extension Siren {
         return alertType
     }
     
-    func getSemanticVersionComponent() -> SirenSemanticVersionFragment {
+    func getSemanticVersionComponent() -> SirenSemanticVersionFragment? {
         
         guard let currentInstalledVersion = currentInstalledVersion, currentAppStoreVersion = currentAppStoreVersion else {
-            //Erroneous scenario. Returning .Major as default.
-            return .Major
+            //Erroneous scenario. Returning nil
+            return nil
         }
+
+        var oldVersion = (currentInstalledVersion).characters.split {$0 == "."}.map { String($0) }.map {Int($0) ?? 0}
+        var newVersion = (currentAppStoreVersion).characters.split {$0 == "."}.map { String($0) }.map {Int($0) ?? 0}
         
-        let oldVersion = (currentInstalledVersion).characters.split {$0 == "."}.map { String($0) }.map {Int($0) ?? 0}
-        let newVersion = (currentAppStoreVersion).characters.split {$0 == "."}.map { String($0) }.map {Int($0) ?? 0}
+        
+        //Let's make sure that both currentInstalled and currentAppstore version have all 4 components set.
+        while oldVersion.count < 4 {
+            oldVersion.append(0)
+        }
+        while newVersion.count < 4 {
+            newVersion.append(0)
+        }
         
         if 2...4 ~= oldVersion.count && oldVersion.count == newVersion.count {
             if newVersion[0] > oldVersion[0] { // A.b.c.d
                 return .Major
-            } else if newVersion[1] > oldVersion[1] { // a.B.c.d
+            }else if newVersion[0] < oldVersion[0] { // A.b.c.d
+                return nil
+            }else if newVersion[1] > oldVersion[1] { // a.B.c.d
                 return .Minor
-            } else if newVersion.count > 2 && (oldVersion.count <= 2 || newVersion[2] > oldVersion[2]) { // a.b.C.d
+            }else if newVersion[1] < oldVersion[1] { // a.B.c.d
+                return nil
+            }else if newVersion[2] > oldVersion[2] { // a.b.C.d
                 return .Patch
-            } else if newVersion.count > 3 && (oldVersion.count <= 3 || newVersion[3] > oldVersion[3]) { // a.b.c.D
+            }else if newVersion[2] < oldVersion[2] { // a.b.C.d
+                return nil
+            }else if newVersion[3] > oldVersion[3] { // a.b.c.D
                 return .Revision
+            }else if newVersion[3] < oldVersion[3] { // a.b.c.D
+                return nil
             }
         }
         
-        //Case not handled. Returning .Major as default
-        return .Major
+        //Case not handled. Returning nil
+        return nil
+    }
+    
+    func checkMandatoryUpdate() -> Bool? {
+        
+        guard let currentInstalledVersion = currentInstalledVersion, currentForceUpdateVersion = currentForceUpdateVersion else {
+            //Erroneous scenario. Returning nil
+            return nil
+        }
+        
+        var oldVersion = (currentInstalledVersion).characters.split {$0 == "."}.map { String($0) }.map {Int($0) ?? 0}
+        var newVersion = (currentForceUpdateVersion).characters.split {$0 == "."}.map { String($0) }.map {Int($0) ?? 0}
+        
+        
+        //Let's make sure that both currentInstalled and currentAppstore version have all 4 components set.
+        while oldVersion.count < 4 {
+            oldVersion.append(0)
+        }
+        while newVersion.count < 4 {
+            newVersion.append(0)
+        }
+        
+        if 2...4 ~= oldVersion.count && oldVersion.count == newVersion.count {
+            if newVersion[0] > oldVersion[0] { // A.b.c.d
+                return true
+            }else if newVersion[0] < oldVersion[0] { // A.b.c.d
+                return false
+            } else if newVersion[1] > oldVersion[1] { // a.B.c.d
+                return true
+            } else if newVersion[1] < oldVersion[1] { // a.B.c.d
+                return false
+            } else if newVersion[2] > oldVersion[2] { // a.b.C.d
+                return true
+            } else if newVersion[2] < oldVersion[2] { // a.b.C.d
+                return false
+            } else if newVersion[3] > oldVersion[3] { // a.b.c.D
+                return true
+            } else if newVersion[3] < oldVersion[3] { // a.b.c.D
+                return false
+            }
+        }
+        
+        //Case not handled. Returning nil
+        return nil
     }
     
     func hideWindow() {
